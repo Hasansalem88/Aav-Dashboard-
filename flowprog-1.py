@@ -5,10 +5,17 @@ from datetime import datetime
 import plotly.express as px
 import gspread
 from google.oauth2 import service_account
+import streamlit as st
 
 # Page setup
 st.set_page_config(layout="wide", page_title="🚗 Assembly Line Tracker")
 st.title("🚗 Vehicle Production Flow Dashboard")
+
+# Access the credentials from Streamlit secrets
+gcp_service_account_info = st.secrets["gcp_service_account"]
+
+# Use it to load credentials
+creds = service_account.Credentials.from_service_account_info
 
 # Authenticate Google Sheets
 SCOPES = [
