@@ -5,7 +5,6 @@ from datetime import datetime
 import plotly.express as px
 import gspread
 from google.oauth2 import service_account
-import streamlit as st
 
 # Page setup
 st.set_page_config(layout="wide", page_title="🚗 Assembly Line Tracker")
@@ -15,18 +14,21 @@ st.title("🚗 Vehicle Production Flow Dashboard")
 gcp_service_account_info = st.secrets["gcp_service_account"]
 
 # Use it to load credentials
-creds = service_account.Credentials.from_service_account_info
-
-# Authenticate Google Sheets
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
 creds = service_account.Credentials.from_service_account_info(
-    st.secrets["gcp_service_account"], scopes=SCOPES
+    gcp_service_account_info, scopes=SCOPES
 )
-client = gspread.authorize(creds)
-sheet = client.open("VehicleDashboard").sheet1
+
+# Authenticate Google Sheets
+try:
+    client = gspread.authorize(creds)
+    sheet = client.open("VehicleDashboard").sheet1
+except Exception as e:
+    st.error(f"❌ Error opening Google Sheet: {e}")
+    st.stop()
 
 # Constants
 PRODUCTION_LINES = [
@@ -34,6 +36,7 @@ PRODUCTION_LINES = [
     "Odyssi", "Wheel Alignment", "ADAS", "PQG",
     "Tests Track", "CC4", "DVX", "Audit", "Delivery"
 ]
+
 STATUS_COLORS = {
     "In Progress": "#FFA500",
     "Completed": "#008000",
@@ -85,6 +88,7 @@ with st.sidebar:
 
 # Apply filters
 filtered_df = df.copy()
+
 if "VIN" in filtered_df.columns:
     if vin_search:
         filtered_df = filtered_df[filtered_df["VIN"].str.upper().str.contains(vin_search)]
@@ -185,3 +189,4 @@ with st.expander("✏️ Update Vehicle Status"):
                 st.rerun()
     else:
         st.info("ℹ️ No VINs available to update.")
+            
