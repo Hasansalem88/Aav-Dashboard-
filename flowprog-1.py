@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 from datetime import datetime
 import plotly.express as px
 import gspread
@@ -54,20 +53,31 @@ def load_data():
             columns.append(line)
             columns.append(f"{line}_time")
         empty_df = pd.DataFrame(columns=columns)
-        sheet.update([empty_df.columns.values.tolist()])
+        sheet.update([list(empty_df.columns)] + [[]])
         return empty_df
     return pd.DataFrame(records)
 
 # Save data to Google Sheets
 def save_data(df):
-    # Create a copy and convert all datetime fields to string
     df_copy = df.copy()
+
+    # 1. تأكد من تحويل كل القيم إلى string أو فارغة
     for col in df_copy.columns:
         df_copy[col] = df_copy[col].apply(
-            lambda x: x.isoformat() if isinstance(x, (datetime, pd.Timestamp)) else x
+            lambda x: x.isoformat() if isinstance(x, (datetime, pd.Timestamp)) and not pd.isnull(x)
+            else "" if pd.isnull(x)
+            else str(x)
         )
-    sheet.clear()
-    sheet.update([df_copy.columns.tolist()] + df_copy.values.tolist())
+
+    # 2. تنظيف أي NaN
+    df_copy = df_copy.fillna("")
+
+    # 3. مسح الشيت وتحديثه بشكل آمن
+    try:
+        sheet.clear()
+        sheet.update([list(df_copy.columns)] + df_copy.values.tolist())
+    except Exception as e:
+        st.error(f"❌ Failed to save data to Google Sheet: {e}")
 
 # Load data
 try:
@@ -103,11 +113,57 @@ if "VIN" in filtered_df.columns:
 
     st.sidebar.markdown(f"**Matching Vehicles:** {len(filtered_df)}")
     valid_vins = filtered_df["VIN"].tolist()
-    col1, col2 = st.columns([1, 3])
-    selected_vin = col1.selectbox("Select Vehicle (VIN)", valid_vins) if valid_vins else None
+    selected_vin = st.sidebar.selectbox("Select Vehicle (VIN)", valid_vins) if valid_vins else None
 else:
     st.sidebar.error("❌ 'VIN' column not found in Google Sheet. Please ensure the header row is correct.")
     selected_vin = None
+
+# --- Daily Summary ---
+with st.expander("📅 Daily Production Summary", expanded=True):
+    col1, col2, col3 = st.columns(3)
+    df["Start Time"] = pd.to_datetime(df["Start Time"], errors="coerce")
+    df["Last Updated"] = pd.to_datetime(df["Last Updated"], errors="coerce")
+    today = pd.Timestamp.now().normalize()
+
+    vehicles_today = df[df["Start Time"].dt.normalize() == today]
+    completed_today = df[(
+        df["Last Updated"].dt.normalize() == today) &
+        (df.apply(lambda row: all(row.get(line) == "Completed" for line in PRODUCTION_LINES), axis=1))
+    ]
+    in_progress = df[df["Current Line"] != "Delivery"]
+
+    col1.metric("🆕 Vehicles Added Today", len(vehicles_today))
+    col2.metric("✅ Completed Today", len(completed_today))
+    col3.metric("🔄 Still In Progress", len(in_progress))
+
+# --- Daily completions trend ---
+with st.expander("📈 Daily Completions Trend", expanded=True):
+    daily_counts = df[df["Last Updated"].notna()].copy()
+    daily_counts["Completed Date"] = daily_counts["Last Updated"].dt.date
+    daily_counts = daily_counts[(
+        daily_counts.apply(lambda row: all(row.get(line) == "Completed" for line in PRODUCTION_LINES), axis=1)
+    )]
+    trend = daily_counts.groupby("Completed Date").size().reset_index(name="Completed Count")
+    if not trend.empty:
+        st.line_chart(trend.rename(columns={"Completed Date": "index"}).set_index("index"))
+    else:
+        st.info("ℹ️ No completed vehicles yet to display in trend.")
+
+# --- Line Progress Tracker ---
+with st.expander("🏭 Line Progress Tracker", expanded=True):
+    line_counts = df["Current Line"].value_counts().reindex(PRODUCTION_LINES, fill_value=0).reset_index()
+    line_counts.columns = ["Production Line", "Vehicle Count"]
+
+    fig_progress = px.bar(
+        line_counts,
+        x="Production Line",
+        y="Vehicle Count",
+        title="Vehicles Currently at Each Production Line",
+        text="Vehicle Count"
+    )
+    fig_progress.update_traces(textposition="outside")
+    fig_progress.update_layout(xaxis_title="", yaxis_title="Vehicles", height=400)
+    st.plotly_chart(fig_progress, use_container_width=True)
 
 # Visualize production flow
 def create_flow_chart(row):
@@ -132,61 +188,12 @@ def create_flow_chart(row):
 
 if selected_vin:
     selected_row = df[df["VIN"] == selected_vin].iloc[0]
-    st.plotly_chart(create_flow_chart(selected_row), use_container_width=True)
-    status_df = filtered_df[["VIN", "Model", "Current Line", "Last Updated"] + PRODUCTION_LINES]
-    st.dataframe(status_df, height=600, use_container_width=True)
-    st.download_button("⬇️ Download Filtered Data as CSV", status_df.to_csv(index=False), "vehicle_status.csv")
-
-# --- Daily Summary ---
-st.subheader("📅 Daily Production Summary")
-
-df["Start Time"] = pd.to_datetime(df["Start Time"], errors="coerce")
-df["Last Updated"] = pd.to_datetime(df["Last Updated"], errors="coerce")
-today = pd.Timestamp.now().normalize()
-
-vehicles_today = df[df["Start Time"].dt.normalize() == today]
-completed_today = df[
-    (df["Last Updated"].dt.normalize() == today) &
-    (df.apply(lambda row: all(row.get(line) == "Completed" for line in PRODUCTION_LINES), axis=1))
-]
-in_progress = df[df["Current Line"] != "Delivery"]
-
-col1, col2, col3 = st.columns(3)
-col1.metric("🆕 Vehicles Added Today", len(vehicles_today))
-col2.metric("✅ Completed Today", len(completed_today))
-col3.metric("🔄 Still In Progress", len(in_progress))
-
-# --- Daily completions trend ---
-daily_counts = df[df["Last Updated"].notna()].copy()
-daily_counts["Completed Date"] = daily_counts["Last Updated"].dt.date
-daily_counts = daily_counts[
-    daily_counts.apply(lambda row: all(row.get(line) == "Completed" for line in PRODUCTION_LINES), axis=1)
-]
-trend = daily_counts.groupby("Completed Date").size().reset_index(name="Completed Count")
-if not trend.empty:
-    st.line_chart(trend.rename(columns={"Completed Date": "index"}).set_index("index"))
-else:
-    st.info("ℹ️ No completed vehicles yet to display in trend.")
-
-# --- Line Progress Tracker ---
-st.subheader("🏭 Line Progress Tracker")
-
-line_counts = df["Current Line"].value_counts().reindex(PRODUCTION_LINES, fill_value=0).reset_index()
-line_counts.columns = ["Production Line", "Vehicle Count"]
-
-fig_progress = px.bar(
-    line_counts,
-    x="Production Line",
-    y="Vehicle Count",
-    title="Vehicles Currently at Each Production Line",
-    text="Vehicle Count"
-)
-fig_progress.update_traces(textposition="outside")
-fig_progress.update_layout(xaxis_title="", yaxis_title="Vehicles", height=400)
-st.plotly_chart(fig_progress, use_container_width=True)
+    st.container().write(f"**Vehicle VIN: {selected_vin}**")
+    st.container().plotly_chart(create_flow_chart(selected_row), use_container_width=True)
+    st.container().dataframe(filtered_df[["VIN", "Model", "Current Line", "Last Updated"] + PRODUCTION_LINES], height=600, use_container_width=True)
 
 # Add vehicle
-with st.expander("✏️ Add New Vehicle"):
+with st.expander("✏️ Add New Vehicle", expanded=True):
     new_vin = st.text_input("VIN (exactly 5 characters)").strip().upper()
     new_model = st.selectbox("Model", ["C43"])
     new_start_time = st.date_input("Start Date", datetime.now().date())
@@ -238,4 +245,4 @@ with st.expander("✏️ Update Vehicle Status"):
                 st.rerun()
     else:
         st.info("ℹ️ No VINs available to update.")
-            
+    
