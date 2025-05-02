@@ -11,16 +11,15 @@ st.set_page_config(layout="wide", page_title="🚗 Assembly Line Tracker")
 st.title("🚗 Vehicle Production Flow Dashboard")
 
 # Access the credentials from Streamlit secrets
-gcp_service_account_info = st.secrets["gcp_service_account"]
+secrets = dict(st.secrets["gcp_service_account"])
+secrets["private_key"] = secrets["private_key"].replace("\\n", "\n")
 
 # Use it to load credentials
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
-creds = service_account.Credentials.from_service_account_info(
-    gcp_service_account_info, scopes=SCOPES
-)
+creds = service_account.Credentials.from_service_account_info(secrets)
 
 # Authenticate Google Sheets
 try:
