@@ -14,12 +14,14 @@ st.title("🚗 Vehicle Production Flow Dashboard")
 secrets = dict(st.secrets["gcp_service_account"])
 secrets["private_key"] = secrets["private_key"].replace("\\n", "\n")
 
-# Use it to load credentials
+# Define the required Google Sheets scopes
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
-creds = service_account.Credentials.from_service_account_info(secrets)
+
+# Apply scopes when creating the credentials
+creds = service_account.Credentials.from_service_account_info(secrets, scopes=SCOPES)
 
 # Authenticate Google Sheets
 try:
